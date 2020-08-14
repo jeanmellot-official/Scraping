@@ -1,0 +1,487 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Mon Oct 21 10:50:44 2019
+
+@author: JMellot
+"""
+import queue
+import threading
+import time
+import selenium
+from selenium.webdriver.common.desired_capabilities import DesiredCapabilities
+from selenium.webdriver.chrome.options import Options  
+import pandas as pd
+from selenium import webdriver
+from tqdm import tqdm
+
+
+
+#Ouverture Driver
+chrome_options = Options()  
+chrome_options.add_argument("--headless")  
+driver = webdriver.Chrome(chrome_options=chrome_options, executable_path = 'script/chromedriver')
+time.sleep(2)
+driver.get("https://icsid.worldbank.org/en/Pages/cases/AdvancedSearch.aspx?fbclid=IwAR1Te799mJ71y_mrFRo14MbqnmBRbSj9L5ZfRumAwfVhpsxWxsGzAHigQdc")
+time.sleep(2)
+
+
+#Selection "All" : affichage de tous les éléments sur la page
+bouton = driver.find_element_by_xpath("/html/body/form/div[12]/div/div/div[4]/div[2]/div[2]/div[1]/div/div[4]/div[2]/div/div[1]/div/div/div/div[1]/div/div[2]/div[4]/div[1]/select")
+all_options = bouton.find_elements_by_tag_name("option")
+for option in all_options:
+    if option.get_attribute("value") == 'All':
+        option.click()
+        
+#Récuperation des lignes
+table=driver.find_element_by_class_name("casede")
+lines=table.find_elements_by_class_name("ng-scope")
+case_list=[]
+
+
+#Récuperation des infos sur chaque ligne
+count = 0    
+nmax_claimant_s = 4
+nmax_respondant_s = 4
+for line in tqdm(lines):
+    try:
+        case = line.find_element_by_class_name("casecol1").text
+        claimant_s =  line.find_element_by_class_name("casecol2").text
+        respondent_s = line.find_element_by_class_name("casecol3").text
+        status = line.find_element_by_class_name("casecol4").text
+        url='https://icsid.worldbank.org/en/Pages/cases/casedetail.aspx?CaseNo='+ str(case)
+              
+        
+        #split des claimants et respondents
+        claimant_s = claimant_s.replace(' and ', ',')
+        claimant_s = claimant_s.split(',')
+        respondent_s = respondent_s.replace(' and ', ',')
+        respondent_s = respondent_s.split(',')
+        
+        claimant_s = list(filter(None, claimant_s))
+        
+        #sélection des 4 premiers claimants et respondents
+        claimant_1 = claimant_s[0]
+        try:
+            claimant_2 = claimant_s[1]
+        except:
+            claimant_2 = 'null'
+        try:
+            claimant_3 = claimant_s[2]
+        except:
+            claimant_3 = 'null' 
+        try:
+            if claimant_s[3] != '':
+                claimant_4 = 'others'
+        except:
+            claimant_4 = 'null'  
+            
+        claimant_s = [claimant_1,claimant_2,claimant_3,claimant_4]
+        
+        
+        case_list.append((case, claimant_s, respondent_s, status, url))
+        count += 1
+    except:
+        pass
+    
+print(' list collected ' + str(count) + '/' + str(len(lines)))
+
+#Split de la liste en N sous-listes
+
+l1 = case_list[:200]
+l2 = case_list[200:400]
+l3 = case_list[400:600]
+l4 = case_list[600:700]
+l5 = case_list[700:]
+'''
+l1 = case_list[:20]
+l2 = case_list[20:40]
+l3 = case_list[40:60]
+l4 = case_list[60:70]
+l5 = case_list[70:]
+'''
+
+non_scrap = []
+#Fonction de récupération des informations sur chaque page
+def recup(case):
+   L = []
+   nmax_avocats_claim = 0
+   nmax_avocats_resp = 0   
+   
+   driver2 = webdriver.Chrome(chrome_options=chrome_options, executable_path = 'script/chromedriver')
+   time.sleep(1)
+   for i in tqdm(range(len(case))):
+              
+       try:
+            driver2.get(case[i][-1])
+            time.sleep(0.5)
+            
+            #Récuparation des infos premier encadré
+            subject_of_dispute = 'indisponible'
+            economic_sector = 'indisponible'
+            instrument_invoked = 'indisponible'
+            applicable_rules = 'indisponible'
+            
+            proc1 = driver2.find_element_by_class_name("proceedingcaselist1")
+            
+            elements1 = proc1.find_elements_by_class_name('ng-scope')
+            
+            subject_of_dis = []
+            economic_sec = []
+            instrument_inv = []
+            applicable_rul = []
+            
+            
+            for balise in elements1:
+        
+                if 'Subject of Dispute:' in balise.text:
+                    subject_of_dis.append(balise.text)
+                    
+                if 'Economic Sector:' in balise.text:    
+                    economic_sec.append(balise.text)
+                        
+                if 'Instrument(s) Invoked:' in  balise.text :
+                    instrument_inv.append(balise.text)
+                    
+                if 'Applicable Rules:' in balise.text:    
+                    applicable_rul.append(balise.text)        
+            
+            try:
+                subject_of_dis.sort(key=lambda item:len(item))    
+                subject_of_dispute = subject_of_dis[0]
+                subject_of_dispute = subject_of_dispute.replace('Subject of Dispute:','')
+            except:
+                pass
+            
+            try:
+                economic_sec.sort(key=lambda item:len(item))    
+                economic_sector = economic_sec[0]
+                economic_sector = economic_sector.replace('Economic Sector:','')
+            except:
+                pass
+            
+            try:
+                instrument_inv.sort(key=lambda item:len(item))    
+                instrument_invoked = instrument_inv[0] 
+                instrument_invoked = instrument_invoked.replace('Instrument(s) Invoked: i\n','')
+            except:
+                pass
+            
+            try:
+                applicable_rul.sort(key=lambda item:len(item))    
+                applicable_rules = applicable_rul[0]
+                applicable_rules = applicable_rules.replace('Applicable Rules:','')
+            except:
+                pass
+            
+            date_registered = 'indisponible'
+            latest_development = 'indisponible'
+            date_latest_development = 'indisponible'
+            language = 'indisponible'
+            
+            bloc = driver2.find_elements_by_class_name("proceedingcaselist2")
+            
+            date = []
+            latest_dev = []
+            lang = []
+                
+            for j in bloc:
+                elements = j.find_elements_by_class_name("ng-scope")
+        
+                for balise in elements:
+                             
+                    if 'Date Registered' in balise.text and len(balise.text) > 20:
+                        date.append(balise.text)
+                    
+                    if 'Latest Development' in balise.text and  len(balise.text) > 22:    
+                        latest_dev.append(balise.text)
+                        
+                    if 'Language(s) of Proceeding:' in balise.text and  len(balise.text) > 26:    
+                        lang.append(balise.text)
+                    
+                    
+            try:
+                date.sort(key=lambda item:len(item))    
+                date_registered = date[0][17:]  
+            except:
+                pass
+            
+            try:
+                latest_dev.sort(key=lambda item:len(item))    
+                latest_development = latest_dev[0][20:]
+                date_latest_development = latest_development.split('-')[0]
+                latest_development = latest_development.replace(date_latest_development,'')
+            except:
+                pass
+            
+            try:
+                lang.sort(key=lambda item:len(item))    
+                language = lang[0][26:]  
+            except:
+                pass
+            
+            
+            # récupération liste avocats
+            representatives = []
+            claimants_representatives = []
+            respondants_representatives = []
+                
+            party_represent = driver2.find_elements_by_tag_name('ul')
+            
+            if case[i][-2] == 'Pending':
+                for element in party_represent:        
+                    if 'Party Representatives' in element.text and 'Latest Development' in element.text and 'Status of Proceeding' in element.text:
+                        representatives.append(element)
+            
+            if case[i][-2] == 'Concluded':
+                for element in party_represent:        
+                    if 'Party Representatives' in element.text and 'Status of Proceeding' in element.text and 'Outcome of Proceeding' in element.text:
+                        representatives.append(element)            
+                        
+                            
+            representatives.sort(key=lambda item:len(item.text))
+            
+            try:
+                bloc = representatives[0]
+                
+                
+                elements = bloc.find_elements_by_class_name("ng-scope")
+                
+                for balise in elements:
+                    if 'Claimant(s):' in balise.text and len(balise.text) > 13:
+                        claimants_representatives.append(balise.text)
+                                
+                    if 'Respondent(s):' in balise.text and len(balise.text) > 15:    
+                        respondants_representatives.append(balise.text)            
+                try:
+                    claimants_representatives = claimants_representatives[1]
+                except:
+                    pass
+                try:
+                    respondants_representatives = respondants_representatives[1]
+                except:
+                    pass
+                
+                bloc2 =  driver2.find_elements_by_class_name('ng-binding')
+                
+                for balise in bloc2:
+                    if balise.text in claimants_representatives :
+                        balise_claim_rep = balise
+                        
+                    if balise.text in respondants_representatives:
+                        balise_resp_rep = balise    
+                
+                liste_avocats_claim = balise_claim_rep.get_attribute('innerHTML').split('<br>')
+                liste_avocats_respond = balise_resp_rep.get_attribute('innerHTML').split('<br>')
+            except:
+                liste_avocats_claim = ['indisponible']
+                liste_avocats_respond = ['indisponible']
+                pass
+            
+            #récupération du nombre max d'avocats
+            if len(liste_avocats_claim) > nmax_avocats_claim:
+                nmax_avocats_claim = len(liste_avocats_claim)
+            if len(liste_avocats_respond) > nmax_avocats_resp:
+                nmax_avocats_resp = len(liste_avocats_respond)
+            
+            #Mise en forme de l'output
+            
+            out = [case[i][0]]
+            for k in range(4):
+                out.append('null')
+            for k in range(4):
+                out.append('null')
+            #Ajout des claimants    
+            for l in range(len(case[i][1])):
+                out[l+1] = case[i][1][l]
+            #Ajout des respondants    
+            for l in range(len(case[i][2])):
+                out[l+1+4] = case[i][2][l]
+            
+            out.append(case[i][3])
+            out.append(subject_of_dispute)
+            out.append(economic_sector)
+            out.append(instrument_invoked)
+            out.append(language)
+            out.append(applicable_rules)
+            out.append(liste_avocats_claim)
+            out.append(liste_avocats_respond)
+            out.append(date_registered)
+            out.append(date_latest_development)
+            out.append(latest_development)
+            
+            
+            out = tuple(out)
+            L.append(out)
+           
+       except:
+           non_scrap.append(case[i])
+           pass
+
+   resultat_liste = (L,(nmax_avocats_claim,nmax_avocats_resp)) 
+   return(resultat_liste)
+    
+class Thread(threading.Thread):
+    
+    def __init__(self, case, queue):
+        threading.Thread.__init__(self)
+        self.case = case
+        self.queue = queue
+    
+    def run(self):
+        return_value = recup(self.case)
+        print('ok')
+        self.queue.put(return_value)
+        self.queue.task_done()
+
+queue = queue.Queue()
+
+
+t = Thread(l1, queue)
+t.daemon = True
+t.start()
+print('okk')
+
+t1 = Thread(l2, queue)
+t1.daemon = True
+t1.start()
+print('okk1')
+
+t2 = Thread(l3, queue)
+t2.daemon = True
+t2.start()
+print('okk2')
+
+t3 = Thread(l4, queue)
+t3.daemon = True
+t3.start()
+print('okk3')
+
+t4 = Thread(l5, queue)
+t4.daemon = True
+t4.start()
+print('okk4')
+
+# wait for threads to finish
+
+queue.join()
+t1.join()
+t2.join()
+t3.join()
+t4.join()
+t.join()
+
+
+if len(non_scrap) != 0:
+    t5 = Thread(non_scrap, queue)
+    t5.daemon = True
+    t5.start()
+    print('okk_final')
+
+    # wait for threads to finish
+
+    queue.join()
+    t1.join()
+    t2.join()
+    t3.join()
+    t4.join()
+    t.join()
+    t5.join()
+
+
+# get values from threads
+final = []
+while not queue.empty():
+    final.append(queue.get())
+    
+print('end')    
+
+if len(non_scrap) == 0:
+    output = [final[0][0] + final [1][0] + final [2][0] + final[3][0] + final[4][0]]
+    
+    nmax_avocats_claim = max(final[0][1][0] , final [1][1][0] , final [2][1][0] , final[3][1][0] , final[4][1][0])
+    nmax_avocats_resp = max(final[0][1][1] , final [1][1][1] , final [2][1][1] , final[3][1][1] , final[4][1][1])
+
+else:
+    output = [final[0][0] + final [1][0] + final [2][0] + final[3][0] + final[4][0] + final[5][0]]
+        
+    nmax_avocats_claim = max(final[0][1][0] , final [1][1][0] , final [2][1][0] , final[3][1][0] , final[4][1][0] , final[5][1][0])
+    nmax_avocats_resp = max(final[0][1][1] , final [1][1][1] , final [2][1][1] , final[3][1][1] , final[4][1][1], final[5][1][1])
+
+#
+
+final = []
+index_case = []
+out = output[0]
+for k in range(len(out)):
+        
+    case_id = out[k][0]
+    claimants = out[k][1:nmax_claimant_s+1]
+    respondents = out[k][nmax_claimant_s + 1 : nmax_claimant_s + nmax_respondant_s + 1]
+    status = out[k][-11]
+    dispute = out[k][-10]
+    economic_sector = out[k][-9]
+    instrument = out[k][-8]
+    language = out[k][-7]
+    
+    result = [case_id] + list(claimants) + list(respondents)
+    i = len(result) 
+    
+    for n in range(nmax_avocats_claim):
+            result.append('null')
+    for n in range(nmax_avocats_resp):
+            result.append('null')
+            
+    #Ajout des avocats claimants    
+    for l in range(len(out[k][-5])):
+        result[i+l] = out[k][-5][l]
+    #Ajout des avocats respondants    
+    for l in range(len(out[k][-4])):
+        result[i+l+nmax_avocats_claim] = out[k][-4][l]
+    result.append(status)
+    result.append(dispute)
+    result.append(economic_sector)
+    result.append(language)
+    result.append(instrument)
+    result.append(out[k][-3])
+    result.append(out[k][-2])
+    result.append(out[k][-1])
+
+    final.append(result)
+    index_case.append(case_id)
+    
+df = pd.DataFrame(final)
+#Création des colonnes
+
+claim = []
+respond = []
+claim_rep = []
+respond_rep =[]
+
+for i in range(nmax_claimant_s):
+    claim.append('Claimant '+ str(i+1))
+    
+for i in range(nmax_respondant_s):
+    respond.append('Respondent '+ str(i+1))
+    
+for i in range(nmax_avocats_claim):
+    claim_rep.append('Claimant_s Representative '+ str(i+1))
+    
+for i in range(nmax_avocats_resp):
+    respond_rep.append('Respondent_s Representative '+ str(i+1))
+    
+df.columns = ['Case'] + claim + respond + claim_rep + respond_rep + ['Status','Dispute','Economic_sector','Language of the arbitration','Instrument_invoked'] +  ['Date Registered','Date of the latest Development','Latest Development']  
+
+
+#Enregistrement au format Excel
+
+import datetime
+
+date=datetime.datetime.today().strftime('%Y-%m-%d')
+nom_doc = 'Excel_output\ICSID_parsing_'+date+'.xlsx'
+csv = df.to_excel(nom_doc)
+
+# Création d'un fichier log
+            
+
+
+
